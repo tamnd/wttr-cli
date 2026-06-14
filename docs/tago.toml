@@ -1,0 +1,10 @@
+title       = "wttr"
+baseURL     = "https://wttr-cli.tamnd.com/"
+description = "Get current weather for any city."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/wttr-cli"
