@@ -34,30 +34,36 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		BaseURL:   "https://wttr.in",
-		UserAgent: "wttr-cli/0.1.0 (github.com/tamnd/wttr-cli)",
-		Rate:      200 * time.Millisecond,
-		Timeout:   30 * time.Second,
+		UserAgent: "wttr-cli/0.1 (tamnd87@gmail.com)",
+		Rate:      500 * time.Millisecond,
+		Timeout:   15 * time.Second,
 		Retries:   3,
 	}
 }
 
-// Weather holds the current conditions and today's forecast for one city.
-type Weather struct {
-	City        string `json:"city"`
+// Current holds the current weather conditions for a location.
+type Current struct {
+	Location    string `kit:"id" json:"location"`
 	TempC       string `json:"temp_c"`
 	TempF       string `json:"temp_f"`
 	FeelsLikeC  string `json:"feels_like_c"`
-	Description string `json:"description"`
-	WindSpeed   string `json:"wind_speed_kmph"`
 	Humidity    string `json:"humidity"`
-	Visibility  string `json:"visibility"`
-	Pressure    string `json:"pressure"`
+	WindKmph    string `json:"wind_kmph"`
+	WindDir     string `json:"wind_dir"`
+	Description string `json:"description"`
+	Visibility  string `json:"visibility_km"`
 	UV          string `json:"uv_index"`
-	MaxTempC    string `json:"max_temp_c"`
-	MinTempC    string `json:"min_temp_c"`
-	Date        string `json:"date"`
-	Country     string `json:"country"`
-	Region      string `json:"region"`
+}
+
+// ForecastDay holds the weather forecast for one day.
+type ForecastDay struct {
+	Date    string `kit:"id" json:"date"`
+	MaxC    string `json:"max_c"`
+	MinC    string `json:"min_c"`
+	MaxF    string `json:"max_f"`
+	MinF    string `json:"min_f"`
+	Sunrise string `json:"sunrise"`
+	Sunset  string `json:"sunset"`
 }
 
 // Client talks to wttr.in over HTTP.
@@ -83,6 +89,7 @@ type wttrJ1 struct {
 			Value string `json:"value"`
 		} `json:"weatherDesc"`
 		WindspeedKmph string `json:"windspeedKmph"`
+		Winddir16Point string `json:"winddir16Point"`
 		Humidity      string `json:"humidity"`
 		Visibility    string `json:"visibility"`
 		Pressure      string `json:"pressure"`
@@ -92,6 +99,12 @@ type wttrJ1 struct {
 		Date     string `json:"date"`
 		MaxTempC string `json:"maxtempC"`
 		MinTempC string `json:"mintempC"`
+		MaxTempF string `json:"maxtempF"`
+		MinTempF string `json:"mintempF"`
+		Astronomy []struct {
+			Sunrise string `json:"sunrise"`
+			Sunset  string `json:"sunset"`
+		} `json:"astronomy"`
 	} `json:"weather"`
 	NearestArea []struct {
 		AreaName []struct {
@@ -106,9 +119,8 @@ type wttrJ1 struct {
 	} `json:"nearest_area"`
 }
 
-// Current fetches the current weather for the given city.
-func (c *Client) Current(ctx context.Context, city string) (*Weather, error) {
-	encoded := url.PathEscape(city)
+func (c *Client) fetch(ctx context.Context, location string) (*wttrJ1, error) {
+	encoded := url.PathEscape(location)
 	u := fmt.Sprintf("%s/%s?format=j1", c.cfg.BaseURL, encoded)
 	body, err := c.get(ctx, u)
 	if err != nil {
@@ -118,36 +130,75 @@ func (c *Client) Current(ctx context.Context, city string) (*Weather, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("wttr: decode response: %w", err)
 	}
-	w := &Weather{City: city}
+	return &raw, nil
+}
+
+// Current fetches the current weather conditions for the given location.
+func (c *Client) Current(ctx context.Context, location string) (*Current, error) {
+	raw, err := c.fetch(ctx, location)
+	if err != nil {
+		return nil, err
+	}
+
+	loc := location
+	if len(raw.NearestArea) > 0 {
+		na := raw.NearestArea[0]
+		area := ""
+		country := ""
+		if len(na.AreaName) > 0 {
+			area = na.AreaName[0].Value
+		}
+		if len(na.Country) > 0 {
+			country = na.Country[0].Value
+		}
+		if area != "" && country != "" {
+			loc = area + ", " + country
+		} else if area != "" {
+			loc = area
+		}
+	}
+
+	w := &Current{Location: loc}
 	if len(raw.CurrentCondition) > 0 {
 		cc := raw.CurrentCondition[0]
 		w.TempC = cc.TempC
 		w.TempF = cc.TempF
 		w.FeelsLikeC = cc.FeelsLikeC
-		w.WindSpeed = cc.WindspeedKmph
 		w.Humidity = cc.Humidity
+		w.WindKmph = cc.WindspeedKmph
+		w.WindDir = cc.Winddir16Point
 		w.Visibility = cc.Visibility
-		w.Pressure = cc.Pressure
 		w.UV = cc.UVIndex
 		if len(cc.WeatherDesc) > 0 {
 			w.Description = cc.WeatherDesc[0].Value
 		}
 	}
-	if len(raw.Weather) > 0 {
-		w.Date = raw.Weather[0].Date
-		w.MaxTempC = raw.Weather[0].MaxTempC
-		w.MinTempC = raw.Weather[0].MinTempC
-	}
-	if len(raw.NearestArea) > 0 {
-		na := raw.NearestArea[0]
-		if len(na.Country) > 0 {
-			w.Country = na.Country[0].Value
-		}
-		if len(na.Region) > 0 {
-			w.Region = na.Region[0].Value
-		}
-	}
 	return w, nil
+}
+
+// Forecast fetches the 3-day weather forecast for the given location.
+func (c *Client) Forecast(ctx context.Context, location string) ([]*ForecastDay, error) {
+	raw, err := c.fetch(ctx, location)
+	if err != nil {
+		return nil, err
+	}
+
+	days := make([]*ForecastDay, 0, len(raw.Weather))
+	for _, w := range raw.Weather {
+		day := &ForecastDay{
+			Date: w.Date,
+			MaxC: w.MaxTempC,
+			MinC: w.MinTempC,
+			MaxF: w.MaxTempF,
+			MinF: w.MinTempF,
+		}
+		if len(w.Astronomy) > 0 {
+			day.Sunrise = w.Astronomy[0].Sunrise
+			day.Sunset = w.Astronomy[0].Sunset
+		}
+		days = append(days, day)
+	}
+	return days, nil
 }
 
 func (c *Client) get(ctx context.Context, u string) ([]byte, error) {

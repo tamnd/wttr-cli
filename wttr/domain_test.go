@@ -25,8 +25,8 @@ func TestClassify_city(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Classify: %v", err)
 	}
-	if typ != "city" {
-		t.Errorf("type = %q, want city", typ)
+	if typ != "location" {
+		t.Errorf("type = %q, want location", typ)
 	}
 	if id != "Tokyo" {
 		t.Errorf("id = %q, want Tokyo", id)
@@ -38,11 +38,24 @@ func TestClassify_url(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Classify url: %v", err)
 	}
-	if typ != "city" {
-		t.Errorf("type = %q, want city", typ)
+	if typ != "location" {
+		t.Errorf("type = %q, want location", typ)
 	}
 	if id != "London" {
 		t.Errorf("id = %q, want London", id)
+	}
+}
+
+func TestClassify_latlon(t *testing.T) {
+	typ, id, err := Domain{}.Classify("48.8566,2.3522")
+	if err != nil {
+		t.Fatalf("Classify latlon: %v", err)
+	}
+	if typ != "location" {
+		t.Errorf("type = %q, want location", typ)
+	}
+	if id != "48.8566,2.3522" {
+		t.Errorf("id = %q, want 48.8566,2.3522", id)
 	}
 }
 
@@ -54,7 +67,7 @@ func TestClassify_empty(t *testing.T) {
 }
 
 func TestLocate(t *testing.T) {
-	got, err := Domain{}.Locate("city", "Paris")
+	got, err := Domain{}.Locate("location", "Paris")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
