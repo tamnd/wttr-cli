@@ -22,11 +22,11 @@ func (Domain) Info() kit.DomainInfo {
 		Hosts:  []string{Host},
 		Identity: kit.Identity{
 			Binary: "wttr",
-			Short:  "Get current weather for any city.",
-			Long: `wttr fetches real-time weather conditions for any city from wttr.in.
+			Short:  "Get weather for any location from wttr.in.",
+			Long: `wttr fetches weather from wttr.in for any city, airport code, or lat/lon.
 
-It returns temperature, feels-like, wind speed, humidity, UV index, and today's
-forecast range in a clean JSON record. No API key required.`,
+No API key required. Use "current" for live conditions or "forecast" for the
+3-day outlook.`,
 			Site: Host,
 			Repo: "https://github.com/tamnd/wttr-cli",
 		},
@@ -38,14 +38,23 @@ func (Domain) Register(app *kit.App) {
 	app.SetClient(newClient)
 
 	kit.Handle(app, kit.OpMeta{
-		Name:     "weather",
+		Name:     "current",
 		Group:    "read",
 		Single:   true,
-		Summary:  "Get current weather for a city",
-		URIType:  "city",
+		Summary:  "Get current weather for a location",
+		URIType:  "location",
 		Resolver: true,
-		Args:     []kit.Arg{{Name: "city", Help: "city name (e.g. Tokyo, New+York, Paris)"}},
-	}, getWeather)
+		Args:     []kit.Arg{{Name: "location", Help: "city name, airport code, or lat,lon (e.g. Paris, JFK, 48.8566,2.3522)"}},
+	}, getCurrent)
+
+	kit.Handle(app, kit.OpMeta{
+		Name:    "forecast",
+		Group:   "read",
+		Single:  false,
+		Summary: "Get 3-day weather forecast for a location",
+		URIType: "location",
+		Args:    []kit.Arg{{Name: "location", Help: "city name, airport code, or lat,lon"}},
+	}, getForecast)
 }
 
 // newClient builds the client from the host-resolved config.
@@ -68,41 +77,59 @@ func newClient(_ context.Context, cfg kit.Config) (any, error) {
 
 // --- inputs ---
 
-type weatherInput struct {
-	City   string  `kit:"arg" help:"city name"`
-	Client *Client `kit:"inject"`
+type currentInput struct {
+	Location string  `kit:"arg" help:"city name, airport code, or lat,lon"`
+	Client   *Client `kit:"inject"`
+}
+
+type forecastInput struct {
+	Location string  `kit:"arg" help:"city name, airport code, or lat,lon"`
+	Client   *Client `kit:"inject"`
 }
 
 // --- handlers ---
 
-func getWeather(ctx context.Context, in weatherInput, emit func(*Weather) error) error {
-	w, err := in.Client.Current(ctx, in.City)
+func getCurrent(ctx context.Context, in currentInput, emit func(*Current) error) error {
+	w, err := in.Client.Current(ctx, in.Location)
 	if err != nil {
 		return mapErr(err)
 	}
 	return emit(w)
 }
 
+func getForecast(ctx context.Context, in forecastInput, emit func(*ForecastDay) error) error {
+	days, err := in.Client.Forecast(ctx, in.Location)
+	if err != nil {
+		return mapErr(err)
+	}
+	for _, d := range days {
+		if err := emit(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // --- Resolver ---
 
-// Classify turns a city name or wttr.in URL into the canonical (type, id).
+// Classify turns a location string or wttr.in URL into the canonical (type, id).
 func (Domain) Classify(input string) (uriType, id string, err error) {
 	input = strings.TrimSpace(input)
 	if u, err2 := url.Parse(input); err2 == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		city := strings.Trim(u.Path, "/")
-		if city != "" {
-			return "city", city, nil
+		loc := strings.Trim(u.Path, "/")
+		if loc != "" {
+			return "location", loc, nil
 		}
 	}
 	if input == "" {
 		return "", "", errs.Usage("unrecognized wttr reference: %q", input)
 	}
-	return "city", input, nil
+	return "location", input, nil
 }
 
 // Locate returns the live https URL for a (type, id).
 func (Domain) Locate(uriType, id string) (string, error) {
-	if uriType != "city" {
+	if uriType != "location" {
 		return "", errs.Usage("wttr has no resource type %q", uriType)
 	}
 	return "https://" + Host + "/" + url.PathEscape(id) + "?format=j1", nil
